@@ -1,11 +1,6 @@
 
 
-from tensorflow.compat.v1.image import ssim_multiscale
-from tensorflow.compat.v1 import convert_to_tensor
-from tensorflow.compat.v1 import to_float
-from tensorflow.image import decode_png
-from tensorflow.image import convert_image_dtype
-
+from skimage.measure import compare_ssim
 from tensorflow import float32
 
 import os
@@ -26,8 +21,10 @@ tf.enable_eager_execution()
 MIN_DIST  = 60*10
 SKIP_DIST = 1
 
-CMP = 'MSE'
+
 CMP = 'L2'
+
+CMP = 'MSE'
 CMP = 'COS'
 
 scannedFiles={}
@@ -35,6 +32,7 @@ scannedFiles={}
 allFeatures = None
 allFrameTimes = None
 fileOffsets = {}
+
 
 
 IndexDetails = collections.namedtuple('IndexDetails', 'indexName index frameIndex timeStamp originalFileName ')
@@ -150,7 +148,7 @@ while 1:
     index          = None
 
   if len(seq)>1:
-    lastflip=seq[-2][3]==True
+    lastflip=seq[-1][3]==True
 
   sourceIndFnum=0
   for (a,b),name in fileOffsets.items():
@@ -201,9 +199,21 @@ while 1:
     if len(tempScores)>total:
       break
 
+  compare_ssim
+
+  orig = cv2.imread(sourceClipName+'\\Frames\\{:0>8d}.png'.format( allFrameTimes[sourceInd] ))
+  orig = cv2.cvtColor(orig, cv2.COLOR_BGR2GRAY)
+  origf = cv2.flip( orig ,1)
+  def scmp(score):
+    s,f,x,i = score
+    print(x)
+    tst = cv2.cvtColor(cv2.imread(f+'\\Frames\\{:0>8d}.png'.format(x)), cv2.COLOR_BGR2GRAY)
+    return max( compare_ssim(orig,tst),compare_ssim(origf,tst) )
+
 
   allScores=tempScores
 
+  #allScores = sorted(allScores,key=scmp,reverse=True)
 
   print(len(allScores))
 
@@ -268,7 +278,7 @@ while 1:
           seqHead_s,seqHead_e=None,None
         print(seqTail,seqHead_s,seqHead_e)
 
-        seq = seqTail+[(seqHead_s,microSeek,sourceInd,flip),(index,0.0,None,False)]
+        seq = seqTail+[(seqHead_s,microSeek,sourceInd,flp),(index,0.0,None,flip)]
         print(seq)
         print('frameIndex',index)
         cx,xy = None,None
@@ -315,6 +325,12 @@ while 1:
                            s_timestamp,e_timestamp,flp
         ))
 
+      for fn in glob.glob('output_*.mkv'):
+        try:
+          os.remove(fn)
+        except Exception as e:
+          print(e)
+
       with open('fileListForConcat.txt','w') as fl:
         for num,(fn,sts,ets,flp) in enumerate(cutSequence):
 
@@ -332,11 +348,7 @@ while 1:
       proc = sp.Popen([ "ffmpeg","-y","-r","24","-f","concat","-safe","0","-i","fileListForConcat.txt", '-c:v','libx264','-preset','veryslow','-crf','23'  ,"transition_match_{}.mkv".format(time.time())])
       proc.communicate()
 
-      for fn in glob.glob('output_*.mkv'):
-        try:
-          os.remove(fn)
-        except Exception as e:
-          print(e)
+
 
 
       seq=[]
