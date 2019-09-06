@@ -15,8 +15,6 @@ import subprocess as sp
 from sklearn.decomposition import PCA
 from sklearn.metrics.pairwise import cosine_similarity
 
-import tensorflow as tf
-tf.enable_eager_execution()
 
 MIN_DIST  = 60*10
 SKIP_DIST = 1
@@ -34,10 +32,17 @@ allFrameTimes = None
 fileOffsets = {}
 
 
+imx,imy=224,126
+
+rows=10
+cols=11
+
+import functools
 
 IndexDetails = collections.namedtuple('IndexDetails', 'indexName index frameIndex timeStamp originalFileName ')
+
+@functools.lru_cache(maxsize=1280)
 def getDataAtIndex(featureIndex):
-  
   indexDetails = IndexDetails()
   indexDetails.index=featureIndex
   indexDetails.frameIndex=allFrameTimes[featureIndex]
@@ -52,14 +57,23 @@ def getDataAtIndex(featureIndex):
   indexDetails.timeStamp=frameIndex/scannedFiles[sourceClipName]['metaData']['frameRate']
   return indexDetails
 
+@functools.lru_cache(maxsize=1280)
+def getImageAtIndex(clipName,index,flip=False):
+  im = cv2.resize( cv2.imread(clipName+'\\Frames\\{:0>8d}.png'.format( allFrameTimes[index] )),(imx,imy) )
+  if flip:
+    im=cv2.flip(im,1)
+  return im
 
 fl=list(glob.glob('ScannedFiles\\*'))
 random.shuffle(fl)
 for scanFolder in fl:
   frameTimesFileName = os.path.join(scanFolder,'MetaData','frameNums.npz')
   featuresFileName = os.path.join(scanFolder,'MetaData','features.npz')
+  #featuresFileName = os.path.join(scanFolder,'MetaData','RESNET50features.npz')
+
   metadataFileName = os.path.join(scanFolder,'MetaData','meta.json')
   if os.path.exists(featuresFileName) and os.path.exists(metadataFileName):
+    print(scanFolder,'start')
     metaData  = json.loads(open(metadataFileName,'r').read())
     npArr     = np.load(featuresFileName)
     npTimeArr = np.load(frameTimesFileName)
@@ -79,9 +93,12 @@ for scanFolder in fl:
 
     scannedFiles[scanFolder] = {'metaData':metaData}
     
-    print(scanFolder,'loaded')
+    print(scanFolder,'loaded',npTimeArr['arr_0'].shape[0],npArr['arr_0'].shape[0])
 
 print(allFeatures.shape,allFrameTimes.shape)
+
+
+
 
 if False:
   pca = PCA(n_components=300)
@@ -91,12 +108,10 @@ if False:
 mx,my = None,None
 cx,cy = None,None
 
-imgdim=224
-
 def click(event, x, y, flags, param):
   global mx,my,cx,cy
-  mx = math.floor(x/imgdim)
-  my  = math.floor(y/imgdim)
+  mx = math.floor(x/imx)
+  my  = math.floor(y/imy)
   if event==1:
     cx = mx
     cy = my
@@ -113,7 +128,6 @@ flip=False
 lastflip=False
 while 1:
   microSeek=0.0
-  flip=False
   if index is None:
     sourceInd      = random.randint(0,allFeatures.shape[0]-1)
     tindex=sourceInd
@@ -174,14 +188,13 @@ while 1:
   for n,s in enumerate(scores):
     destFile = None
     for (a,b),name in fileOffsets.items():
-      if a<n<b and name!=sourceClipName :
+      if a<n<b and name!=sourceClipName:
         allScores.append( (s,name, allFrameTimes[n],n) )
         break
 
   allScores=sorted(allScores)
 
-  rows=6
-  cols=11
+
 
   total = (rows*cols)+1
 
@@ -190,7 +203,7 @@ while 1:
   for s,f,x,i in allScores:
     close=False
     for v in seen:
-      if abs(allFrameTimes[v]-allFrameTimes[i])<10*60:
+      if False and abs(allFrameTimes[v]-allFrameTimes[i])<10*60:
         close=True
         break
     if not close:
@@ -201,13 +214,13 @@ while 1:
 
   compare_ssim
 
-  orig = cv2.imread(sourceClipName+'\\Frames\\{:0>8d}.png'.format( allFrameTimes[sourceInd] ))
+  orig = getImageAtIndex(sourceClipName,sourceInd) 
   orig = cv2.cvtColor(orig, cv2.COLOR_BGR2GRAY)
   origf = cv2.flip( orig ,1)
   def scmp(score):
     s,f,x,i = score
     print(x)
-    tst = cv2.cvtColor(cv2.imread(f+'\\Frames\\{:0>8d}.png'.format(x)), cv2.COLOR_BGR2GRAY)
+    tst = getImageAtIndex(f,i) 
     return max( compare_ssim(orig,tst),compare_ssim(origf,tst) )
 
 
@@ -217,13 +230,7 @@ while 1:
 
   print(len(allScores))
 
-  if lastflip:
-    previews = [ [cv2.flip( cv2.resize(cv2.imread(sourceClipName+'\\Frames\\{:0>8d}.png'.format( allFrameTimes[sourceInd] )),(imgdim,imgdim),interpolation=cv2.INTER_CUBIC ),1) ] ]
-  else:
-    previews = [ [cv2.resize(cv2.imread(sourceClipName+'\\Frames\\{:0>8d}.png'.format( allFrameTimes[sourceInd] )),(imgdim,imgdim),interpolation=cv2.INTER_CUBIC )] ]
-    
-
-
+  previews = [ [ getImageAtIndex(sourceClipName,sourceInd,flip=lastflip) ] ]
 
   for s,f,x,i in allScores:
     if len(previews)>=rows and len(previews[-1])>=cols:
@@ -235,18 +242,17 @@ while 1:
       previews.append([])
 
     previews[-1].append(
-      cv2.resize(cv2.imread(f+'\\Frames\\{:0>8d}.png'.format(x)),(imgdim,imgdim),interpolation=cv2.INTER_CUBIC)
+      getImageAtIndex(f,i,flip=flip)
     )
 
 
   if type( previews[-1] ) == list:
     while len(previews[-1])<cols:
-      previews[-1].append(np.zeros( (imgdim,imgdim,3)).astype(np.uint8))
+      previews[-1].append(np.zeros( (imx,imy,3)).astype(np.uint8))
     previews[-1]=np.hstack(previews[-1])
 
 
   matchImg =  np.vstack(previews+[np.zeros((30,previews[0].shape[1],3),np.uint8)])
-
 
 
   while 1:
@@ -262,7 +268,7 @@ while 1:
     cv2.putText(outMatchImg,message,(0,matchImg.shape[0]-5), cv2.FONT_HERSHEY_SIMPLEX, 1,(255,255,255),1,cv2.LINE_AA)
 
     if mx is not None:
-      outMatchImg = cv2.rectangle(outMatchImg,(imgdim*mx,imgdim*my),((imgdim*mx)+imgdim,(imgdim*my)+imgdim),(0,255,0),1)
+      outMatchImg = cv2.rectangle(outMatchImg,(imx*mx,imy*my),((imx*mx)+imx,(imy*my)+imy),(0,255,0),1)
 
     if cx is not None:
 
@@ -316,7 +322,7 @@ while 1:
 
         print(ms)
         s_timestamp=s_timestamp/scannedFiles[s_filename]['metaData']['frameRate']
-        e_timestamp=e_timestamp/scannedFiles[e_filename]['metaData']['frameRate']+ms
+        e_timestamp=(e_timestamp/scannedFiles[e_filename]['metaData']['frameRate'])+ms
 
         print('file',s_filename,':',s_timestamp,'-',e_timestamp)
         
@@ -349,12 +355,13 @@ while 1:
       proc.communicate()
 
 
-
-
       seq=[]
 
     if keyP==ord('f'):
       flip=not flip    
+      index=sourceInd
+      addSkip=False
+      break
     if keyP==ord('z'):
       microSeek-=0.2
     if keyP==ord('x'):
